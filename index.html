@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>User Management</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f4f4f9;
+            margin: 0;
+            padding: 20px;
+        }
+        h1, h2 {
+            color: #333;
+            text-align: center;
+        }
+        .section {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+            max-width: 600px;
+            margin: 20px auto;
+        }
+        form {
+            margin-bottom: 20px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        input, textarea {
+            width: calc(100% - 22px);
+            padding: 10px;
+            margin-bottom: 15px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            padding: 10px 15px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            display: block;
+            margin: 10px 0;
+            width: 100%;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+        table, th, td {
+            border: 1px solid #ddd;
+        }
+        th, td {
+            padding: 10px;
+            text-align: left;
+        }
+        th {
+            background-color: #f8f8f8;
+        }
+        #search-result p {
+            margin: 0;
+            padding: 10px;
+            background-color: #f8f8f8;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body>
+    <h1>User Management</h1>
+
+    <div id="login-section" class="section">
+        <h2>Login</h2>
+        <form id="login-form">
+            <label for="login-username">Username:</label>
+            <input type="text" id="login-username" name="username" required>
+            <label for="login-password">Password:</label>
+            <input type="password" id="login-password" name="password" required>
+            <button type="submit">Login</button>
+        </form>
+    </div>
+
+    <div id="user-section" style="display: none;">
+        <div class="section">
+            <h2>Create User</h2>
+            <form id="create-user-form">
+                <label for="username">Username:</label>
+                <input type="text" id="username" name="username" required>
+                <label for="password">Password:</label>
+                <input type="password" id="password" name="password" required>
+                <label for="name">Name:</label>
+                <input type="text" id="name" name="name" required>
+                <label for="age">Age:</label>
+                <input type="number" id="age" name="age" required>
+                <label for="description">Description:</label>
+                <textarea id="description" name="description"></textarea>
+                <button type="submit">Create User</button>
+            </form>
+        </div>
+
+        <div class="section">
+            <h2>All Users</h2>
+            <button onclick="fetchUsers()">Refresh Users</button>
+            <table id="users-table">
+                <thead>
+                    <tr>
+                        <th>Name</th>
+                        <th>Age</th>
+                        <th>Description</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                </tbody>
+            </table>
+        </div>
+
+        <div class="section">
+            <h2>Search User</h2>
+            <input type="text" id="search-username" placeholder="Enter User Name">
+            <button onclick="searchUser()">Search</button>
+            <div id="search-result"></div>
+        </div>
+    </div>
+
+    <script>
+        let authToken = null;
+
+        document.getElementById('login-form').addEventListener('submit', async function(event) {
+            event.preventDefault();
+            const formData = new FormData(event.target);
+            const data = Object.fromEntries(formData.entries());
+            try {
+                const response = await fetch('/api/login', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(data)
+                });
+                if (!response.ok) {
+                    throw new Error('Login failed');
+                }
+                const result = await response.json();
+                authToken = result.token;
+                document.getElementById('login-section').style.display = 'none';
+                document.getElementById('user-section').style.display = 'block';
+                fetchUsers();
+            } catch (error) {
+                alert('Login failed. Please check your credentials.');
+            }
+        });
+
+        document.getElementById('create-user-form').addEventListener('submit', async function(event) {
+            event.preventDefault();
+            const formData = new FormData(event.target);
+            const data = Object.fromEntries(formData.entries());
+            const response = await fetch('/api/users/', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${authToken}`
+                },
+                body: JSON.stringify(data)
+            });
+            if (response.ok) {
+                alert('User created successfully!');
+                event.target.reset();
+                fetchUsers();
+            } else {
+                alert('Failed to create user');
+            }
+        });
+
+        async function fetchUsers() {
+            const response = await fetch('/api/users/', {
+                headers: {
+                    'Authorization': `Bearer ${authToken}`
+                }
+            });
+            if (response.ok) {
+                const users = await response.json();
+                const tbody = document.querySelector('#users-table tbody');
+                tbody.innerHTML = '';
+                users.forEach(user => {
+                    const tr = document.createElement('tr');
+                    tr.innerHTML = `
+                        <td>${user.name}</td>
+                        <td>${user.age}</td>
+                        <td>${user.description}</td>
+                        <td>
+                            <button onclick="deleteUser(${user.id})">Delete</button>
+                        </td>
+                    `;
+                    tbody.appendChild(tr);
+                });
+            } else {
+                alert('Failed to fetch users');
+            }
+        }
+
+        async function deleteUser(userId) {
+            const response = await fetch(`/api/users/${userId}`, {
+                method: 'DELETE',
+                headers: {
+                    'Authorization': `Bearer ${authToken}`
+                }
+            });
+            if (response.ok) {
+                alert('User deleted successfully!');
+                fetchUsers();
+            } else {
+                alert('Failed to delete user');
+            }
+        }
+
+        async function searchUser() {
+            const name = document.getElementById('search-username').value;
+            try {
+                const response = await fetch(`/api/users/${name}`);
+                if (!response.ok) {
+                    throw new Error('User not found');
+                }
+                const user = await response.json();
+                const resultDiv = document.getElementById('search-result');
+                resultDiv.innerHTML = `
+                    <p>Name: ${user.name}</p>
+                    <p>Age: ${user.age}</p>
+                    <p>Description: ${user.description}</p>
+                `;
+            } catch (error) {
+                const resultDiv = document.getElementById('search-result');
+                resultDiv.innerHTML = '<p>User not found</p>';
+            }
+        }
+    </script>
+</body>
+</html>
