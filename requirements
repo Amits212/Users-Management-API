@@ -1,3 +1,5 @@
 fastapi
 pydantic
 uvicorn
+pika
+aio_pika

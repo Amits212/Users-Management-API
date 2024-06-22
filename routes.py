@@ -1,27 +1,67 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException ,Request
+from fastapi.templating import Jinja2Templates
+from fastapi.responses import HTMLResponse, JSONResponse
 from models import User, LoginRequest
 from database import get_db_connection
-from typing import List
+from typing import List, Dict
+import pika
+import aio_pika
+from datetime import datetime
+import logging
+import os
+import asyncio
+
 
 router = APIRouter()
 
-login_attempts = 0
+templates = Jinja2Templates(directory="templates")
+
+RABBITMQ_HOST = os.getenv("RABBITMQ_HOST", "localhost")
+RABBITMQ_PORT = int(os.getenv("RABBITMQ_PORT", "5672"))
+RABBITMQ_QUEUE = os.getenv("RABBITMQ_QUEUE", "failed_logins")
+login_attempts: Dict[str, int] = {}
+
+
+def send_to_rabbitmq(message: str):
+    try:
+        connection = pika.BlockingConnection(pika.ConnectionParameters(RABBITMQ_HOST))
+        channel = connection.channel()
+        channel.queue_declare(queue=RABBITMQ_QUEUE, durable=True)
+        channel.basic_publish(exchange='', routing_key=RABBITMQ_QUEUE, body=message)
+        connection.close()
+        logging.info(f"Message sent to RabbitMQ: {message}")
+    except Exception as e:
+        logging.error(f"Failed to publish message: {e}")
+
+def increment_login_attempts(username: str):
+    if username in login_attempts:
+        login_attempts[username] += 1
+    else:
+        login_attempts[username] = 1
+    return login_attempts[username]
+
+def reset_login_attempts(username: str):
+    if username in login_attempts:
+        del login_attempts[username]
+
 @router.post("/api/login")
 async def login(request: LoginRequest):
-    global login_attempts
-    login_attempts += 1
-    if login_attempts > 5:
-        raise HTTPException(status_code=429, detail="Login Failed")
     conn = get_db_connection()
     cursor = conn.cursor()
     query = "SELECT * FROM users WHERE username = ?"
-    cursor.execute(query, (request.username,))
+    username = request.username
+    cursor.execute(query, (username,))
     user = cursor.fetchone()
     conn.close()
-    if not user or user['password'] != request.password:
-        raise HTTPException(status_code=401, detail="Login Failed")
-    login_attempts = 0
 
+    if not user or user['password'] != request.password:
+        attempts = increment_login_attempts(username)
+        if attempts > 3:
+            message = f"{username},{datetime.utcnow()}"
+            print(f'{message=}')
+            send_to_rabbitmq(message)
+        raise HTTPException(status_code=401, detail="Login Failed")
+    reset_login_attempts(username)
     return {"Login: login successful"}
 
 @router.post("/api/users/")
@@ -80,3 +120,25 @@ def delete_user(user_id: int):
         raise HTTPException(status_code=404, detail="User not found")
     conn.close()
     return {"detail": "User deleted"}
+
+
+@router.get("/api/messages", response_class=JSONResponse)
+async def get_queue_messages():
+    connection = await aio_pika.connect_robust(
+        host=RABBITMQ_HOST,
+        port=RABBITMQ_PORT
+    )
+    queue_messages = []
+
+    async with connection:
+        channel = await connection.channel()
+        queue = await channel.declare_queue(RABBITMQ_QUEUE, durable=True)
+
+        async with queue.iterator() as queue_iter:
+            async for message in queue_iter:
+                async with message.process():
+                    queue_messages.append(message.body.decode())
+                    if len(queue_messages) >= 10:
+                        break
+
+    return {"messages": queue_messages}
